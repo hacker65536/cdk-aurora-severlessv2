@@ -1,10 +1,12 @@
-import { Stack, StackProps } from "aws-cdk-lib";
+import { CfnOutput, Stack, StackProps } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { aws_rds as rds } from "aws-cdk-lib";
 import { aws_iam as iam } from "aws-cdk-lib";
 import { aws_ec2 as ec2 } from "aws-cdk-lib";
+import { aws_autoscaling as autoscaling } from "aws-cdk-lib";
 import { custom_resources as cr } from "aws-cdk-lib";
 import * as cdk from "aws-cdk-lib";
+import { Port } from "aws-cdk-lib/aws-ec2";
 
 export class CdkAuroraSeverlessv2Stack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -16,6 +18,8 @@ export class CdkAuroraSeverlessv2Stack extends Stack {
     2. create a first dbinstance of provisioned
     3. modify ServerlessV2ScalingConfiguration to dbcluster
     4. create a second dbinstance of serverlessv2
+    5. create a asg for loadtest
+    6. allow access from asg to rds
 
 
     */
@@ -107,9 +111,72 @@ export class CdkAuroraSeverlessv2Stack extends Stack {
         monitoringRoleArn: (
           dbCluster.node.findChild("MonitoringRole") as iam.Role
         ).roleArn,
+        enablePerformanceInsights: true,
       }
     );
 
     serverlessDBinstance.node.addDependency(dbScalingConfigureTarget);
+
+    const userdata = ec2.UserData.forLinux({
+      shebang: "#!/bin/env bash",
+    });
+    const userdatacmd = [
+      "yum update -y",
+      "yum install -y jq git make automake libtool pkgconfig libaio-devel",
+      "yum install -y mysql-devel openssl-devel",
+      "yum install -y postgresql-devel",
+      "cd /usr/local/src",
+      "git clone https://github.com/akopytov/sysbench.git",
+      "cd sysbench/",
+      "./autogen.sh",
+      "./configure",
+      "make -j",
+      "make install",
+      "rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022",
+      "yum -y install https://dev.mysql.com/get/mysql80-community-release-el7-6.noarch.rpm",
+      "yum install mysql -y",
+      "sysbench --version",
+    ];
+    userdata.addCommands(...userdatacmd);
+
+    const loadtestasg = new autoscaling.AutoScalingGroup(this, "ASG", {
+      vpc,
+      instanceType: ec2.InstanceType.of(
+        ec2.InstanceClass.C6A,
+        ec2.InstanceSize.LARGE
+      ),
+      userData: userdata,
+      machineImage: ec2.MachineImage.latestAmazonLinux({
+        generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
+        storage: ec2.AmazonLinuxStorage.GENERAL_PURPOSE,
+      }),
+      desiredCapacity: 2,
+      blockDevices: [
+        {
+          deviceName: "/dev/xvda",
+          volume: autoscaling.BlockDeviceVolume.ebs(16, {
+            volumeType: autoscaling.EbsDeviceVolumeType.GP3,
+          }),
+        },
+      ],
+      updatePolicy: autoscaling.UpdatePolicy.replacingUpdate(),
+    });
+
+    const policies: string[] = [
+      "AmazonSSMManagedInstanceCore",
+      "SecretsManagerReadWrite",
+    ];
+
+    for (let v of policies) {
+      loadtestasg.role.addManagedPolicy(
+        iam.ManagedPolicy.fromAwsManagedPolicyName(v)
+      );
+    }
+
+    dbCluster.connections.allowFrom(loadtestasg, Port.tcp(3306));
+
+    new CfnOutput(this, "rdspass", {
+      value: dbCluster.secret?.secretArn!,
+    });
   }
 }
