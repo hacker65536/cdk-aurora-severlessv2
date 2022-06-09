@@ -1,0 +1,28 @@
+{
+  "name": "cdk-aurora-severlessv2",
+  "version": "0.1.0",
+  "bin": {
+    "cdk-aurora-severlessv2": "bin/cdk-aurora-severlessv2.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "@types/jest": "^27.5.0",
+    "@types/node": "10.17.27",
+    "@types/prettier": "2.6.0",
+    "jest": "^27.5.1",
+    "ts-jest": "^27.1.4",
+    "aws-cdk": "file:../../aws-cdk/packages/aws-cdk",
+    "ts-node": "^9.1.0",
+    "typescript": "~3.9.7"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "file:../../aws-cdk/packages/aws-cdk-lib/",
+    "constructs": "10.0.9",
+    "source-map-support": "^0.5.21"
+  }
+}
